@@ -16,8 +16,10 @@ Production-oriented API for scraping demo pages with Playwright, Express, TypeSc
 
 - Express API with route, controller, service, middleware, and utility layers
 - Playwright Chromium scraping through a shared browser service
+- QA Automation contracts: `POST /discover`, `POST /locators`, `POST /execute` (PRD envelopes)
 - Swagger UI at `/docs` and OpenAPI JSON at `/openapi.json`
 - Zod request validation, Helmet, CORS, compression, and rate limiting
+- Optional `PLAYWRIGHT_SERVICE_TOKEN` for QA endpoints
 - Winston structured logging
 - Jest unit tests and Playwright API/e2e tests
 - Docker image with Playwright browser dependency installation
@@ -78,6 +80,109 @@ GET /health
 ```
 
 Returns service health, uptime, environment, and timestamp.
+
+### QA Automation (n8n contracts)
+
+These three endpoints match the platform PRDs (`06` discovery, `07` locators, `09` execute). Responses use `{ ok: true, ... }` or `{ ok: false, retryable, error: { code, message } }` (HTTP 200 for logical failures; 5xx only on crashes). No database access.
+
+Optional auth: set `PLAYWRIGHT_SERVICE_TOKEN`, then send `Authorization: Bearer <token>` or `X-Service-Token: <token>`.
+
+#### Discover
+
+```http
+POST /discover
+Content-Type: application/json
+
+{
+  "job_id": "uuid",
+  "base_url": "https://example.com",
+  "max_depth": 2,
+  "max_pages": 50,
+  "browser": "chromium",
+  "same_origin": true,
+  "capture": {
+    "html_snapshot": true,
+    "screenshot": true,
+    "meta_description": true,
+    "page_model": true
+  }
+}
+```
+
+BFS same-origin crawl with depth/page caps (hard max depth 5 / pages 200). Per page: `url`, `title`, `meta_description`, `depth`, `status`, optional HTML, screenshot (base64 PNG), and compact `page_model`. Stats: `{ visited, skipped_external, errors }`.
+
+#### Locators
+
+```http
+POST /locators
+Content-Type: application/json
+
+{
+  "job_id": "uuid",
+  "browser": "chromium",
+  "max_per_page": 80,
+  "pages": [
+    { "page_id": "uuid", "url": "https://example.com/login" }
+  ]
+}
+```
+
+Loads each URL and extracts interactive elements. Strategy preference: `testid` → `role` → `placeholder`/`label` → `css` (`xpath` only if Playwright/DOM path warrants; this extractor prefers css over inventing xpath). Per-page `{ ok, locators }` or `{ ok: false, error }`. Stats: `{ pages_ok, pages_failed, locator_count }`. Zero locators overall → `LOCATORS_EMPTY`.
+
+#### Execute
+
+```http
+POST /execute
+Content-Type: application/json
+
+{
+  "job_id": "uuid",
+  "base_url": "https://example.com",
+  "browser": "chromium",
+  "capture": {
+    "screenshot_on_failure": true,
+    "video": false,
+    "trace": false
+  },
+  "cases": [
+    {
+      "test_case_id": "uuid",
+      "test_plan_id": "uuid",
+      "title": "Login",
+      "steps": [
+        { "ordinal": 1, "action": "goto", "value": "/login" },
+        {
+          "ordinal": 2,
+          "action": "fill",
+          "locator": { "strategy": "testid", "selector": "email-input" },
+          "value": "user@example.com"
+        },
+        {
+          "ordinal": 3,
+          "action": "click",
+          "locator": {
+            "strategy": "role",
+            "selector": "button",
+            "role": "button",
+            "accessible_name": "Sign in"
+          }
+        }
+      ],
+      "assertions": [{ "type": "url_contains", "expected": "/dashboard" }]
+    }
+  ]
+}
+```
+
+Actions: `goto`, `fill`, `click`, `check`, `uncheck`, `select`, `press`, `wait`, `assert`. Locator strategies map to Playwright helpers (`getByTestId`, `getByRole`, `getByPlaceholder`, `getByLabel`, `getByText`, CSS/`xpath=`). Failures return `passed|failed|error` with optional screenshot artifact `{ kind: "screenshot", encoding: "base64", ... }`.
+
+**Deviation:** `capture.video` / `capture.trace` are accepted but not recorded on the shared browser context (no fake artifacts).
+
+Contract helper self-check:
+
+```bash
+npx jest src/qa-contract.check.test.ts
+```
 
 ### Scrape Test Sites
 
@@ -202,6 +307,7 @@ playwright-with-nodejs/
 | `SCRAPER_MAX_LIMIT`     | `50`                                                   | Maximum scrape limit used by configuration                  |
 | `RATE_LIMIT_WINDOW_MS`  | `60000`                                                | Rate limit window                                           |
 | `RATE_LIMIT_MAX`        | `60`                                                   | Max requests per rate limit window                          |
+| `PLAYWRIGHT_SERVICE_TOKEN` | _(empty)_                                           | Optional shared secret for `/discover` `/locators` `/execute` |
 
 ## Docker
 

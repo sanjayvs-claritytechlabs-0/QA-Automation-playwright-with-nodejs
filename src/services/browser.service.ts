@@ -1,18 +1,43 @@
-import { chromium, Browser, Page, BrowserContext } from 'playwright';
+import {
+  chromium,
+  firefox,
+  webkit,
+  Browser,
+  Page,
+  BrowserContext,
+  BrowserType,
+} from 'playwright';
 import logger from '../config/logger';
 import env from '../config/env';
+
+type BrowserName = 'chromium' | 'firefox' | 'webkit';
+
+function resolveBrowserType(name?: string): { name: BrowserName; type: BrowserType } {
+  const key = (name || 'chromium').toLowerCase() as BrowserName;
+  if (key === 'firefox') return { name: 'firefox', type: firefox };
+  if (key === 'webkit') return { name: 'webkit', type: webkit };
+  return { name: 'chromium', type: chromium };
+}
 
 export class BrowserService {
   private browser: Browser | null = null;
   private context: BrowserContext | null = null;
+  private browserName: BrowserName | null = null;
 
-  async initialize(): Promise<void> {
-    if (this.browser) return;
+  async initialize(browserName?: string): Promise<void> {
+    const { name, type } = resolveBrowserType(browserName);
 
-    logger.info('Initializing Playwright browser');
-    this.browser = await chromium.launch({
+    if (this.browser && this.browserName === name) return;
+
+    if (this.browser) {
+      await this.close();
+    }
+
+    logger.info(`Initializing Playwright browser (${name})`);
+    this.browser = await type.launch({
       headless: env.PLAYWRIGHT_HEADLESS,
     });
+    this.browserName = name;
 
     this.context = await this.browser.newContext({
       userAgent:
@@ -21,10 +46,8 @@ export class BrowserService {
     });
   }
 
-  async createPage(): Promise<Page> {
-    if (!this.browser) {
-      await this.initialize();
-    }
+  async createPage(browserName?: string): Promise<Page> {
+    await this.initialize(browserName);
 
     if (!this.context) {
       throw new Error('Browser context not initialized');
@@ -64,6 +87,7 @@ export class BrowserService {
       this.browser = null;
     }
 
+    this.browserName = null;
     logger.info('Browser closed');
   }
 

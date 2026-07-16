@@ -10,6 +10,7 @@ import { securityMiddleware, corsMiddleware, compressionMiddleware } from './mid
 import healthRoutes from './routes/health.routes';
 import scrapeRoutes from './routes/scrape.routes';
 import testRoutes from './routes/test.routes';
+import qaRoutes from './routes/qa.routes';
 import { getHealth } from './controllers/health.controller';
 
 export const createApp = () => {
@@ -23,9 +24,9 @@ export const createApp = () => {
   app.use(corsMiddleware);
   app.use(compressionMiddleware);
 
-  // Body parser middleware
-  app.use(express.json({ limit: '10mb' }));
-  app.use(express.urlencoded({ limit: '10mb', extended: true }));
+  // Body parser — larger limit for execute case payloads
+  app.use(express.json({ limit: '25mb' }));
+  app.use(express.urlencoded({ limit: '25mb', extended: true }));
 
   // Request logging
   app.use(requestLoggerMiddleware);
@@ -54,7 +55,10 @@ export const createApp = () => {
   // Health endpoint (outside routes for better availability)
   app.get('/health', getHealth);
 
-  // API routes
+  // QA Automation contracts (PRD 06/07/09) — root paths
+  app.use(qaRoutes);
+
+  // Legacy scrape / smoke routes
   app.use('/health', healthRoutes);
   app.use('/api/scrape', scrapeRoutes);
   app.use('/api/tests/smoke', testRoutes);

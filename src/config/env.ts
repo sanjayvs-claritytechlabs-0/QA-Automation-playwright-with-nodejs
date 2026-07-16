@@ -16,6 +16,8 @@ const envSchema = z.object({
     .default('true'),
   RATE_LIMIT_WINDOW_MS: z.coerce.number().default(60000),
   RATE_LIMIT_MAX: z.coerce.number().default(60),
+  /** Optional shared secret for /discover /locators /execute (Bearer or X-Service-Token). */
+  PLAYWRIGHT_SERVICE_TOKEN: z.string().optional().default(''),
 });
 
 export type Env = z.infer<typeof envSchema>;

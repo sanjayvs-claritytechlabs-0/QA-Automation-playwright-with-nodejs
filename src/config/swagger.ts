@@ -22,6 +22,14 @@ const options = {
       },
     ],
     components: {
+      securitySchemes: {
+        ServiceToken: {
+          type: 'apiKey',
+          in: 'header',
+          name: 'X-Service-Token',
+          description: 'Optional; required when PLAYWRIGHT_SERVICE_TOKEN is set. Bearer also accepted.',
+        },
+      },
       schemas: {
         Meta: {
           type: 'object',
