@@ -83,7 +83,7 @@ export type ExecuteStep = {
   action: string;
   locator?: ExecuteLocator | null;
   value?: string | null;
-  description?: string;
+  description?: string | null;
 };
 
 export type ExecuteAssertion = {
