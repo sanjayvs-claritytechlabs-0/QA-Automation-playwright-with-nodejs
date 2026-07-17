@@ -1,8 +1,9 @@
 import { normalizeUrl, isSameOrigin } from './utils/url';
 import { planLocator } from './utils/locator-resolve';
+import { executeRequestSchema } from './schemas/qa.schema';
 
 /**
- * Runnable self-check (ponytail): URL normalize + locator plan mapping.
+ * Runnable self-check (ponytail): URL normalize + locator plan mapping + execute schema.
  * Run: npx jest src/qa-contract.check.test.ts
  */
 describe('QA contract helpers', () => {
@@ -53,5 +54,22 @@ describe('QA contract helpers', () => {
       kind: 'css',
       selector: '.btn.primary',
     });
+  });
+
+  test('executeRequestSchema coerces boolean/number expected and value', () => {
+    const parsed = executeRequestSchema.safeParse({
+      base_url: 'https://example.com',
+      cases: [
+        {
+          test_case_id: 'tc-1',
+          steps: [{ action: 'wait', value: 500, description: null }],
+          assertions: [{ type: 'visible', expected: true }],
+        },
+      ],
+    });
+    expect(parsed.success).toBe(true);
+    if (!parsed.success) return;
+    expect(parsed.data.cases[0].steps[0].value).toBe('500');
+    expect(parsed.data.cases[0].assertions?.[0].expected).toBe('true');
   });
 });

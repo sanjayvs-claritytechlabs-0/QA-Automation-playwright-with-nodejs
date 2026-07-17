@@ -40,6 +40,15 @@ const locatorObjectSchema = z.object({
   accessible_name: z.string().nullable().optional(),
 });
 
+/** AI often emits boolean/number for expected/value; coerce to string for execute. */
+const strOrNullCoerce = z.preprocess((v) => {
+  if (v === undefined) return undefined;
+  if (v === null) return null;
+  if (typeof v === 'string') return v;
+  if (typeof v === 'boolean' || typeof v === 'number') return String(v);
+  return String(v);
+}, z.union([z.string(), z.null()]).optional());
+
 export const executeRequestSchema = z.object({
   job_id: z.string().optional(),
   base_url: z.string().url(),
@@ -62,15 +71,15 @@ export const executeRequestSchema = z.object({
             ordinal: z.number().optional(),
             action: z.string().min(1),
             locator: locatorObjectSchema.nullable().optional(),
-            value: z.union([z.string(), z.null()]).optional(),
-            description: z.string().optional(),
+            value: strOrNullCoerce,
+            description: z.string().nullable().optional(),
           })
         ),
         assertions: z
           .array(
             z.object({
               type: z.string().min(1),
-              expected: z.union([z.string(), z.null()]).optional(),
+              expected: strOrNullCoerce,
               locator_id: z.string().nullable().optional(),
               locator: locatorObjectSchema.nullable().optional(),
             })
