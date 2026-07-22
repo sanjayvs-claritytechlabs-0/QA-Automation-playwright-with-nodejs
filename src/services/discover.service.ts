@@ -207,7 +207,8 @@ export class DiscoverService {
         try {
           const response = await page.goto(item.url, {
             waitUntil: 'domcontentloaded',
-            timeout: 60000,
+            // Keep under Railway proxy budget; slow pages skip rather than burn 60s each.
+            timeout: 20000,
           });
           const status = response?.status() ?? 0;
           const finalUrl = normalizeUrl(page.url()) || item.url;
