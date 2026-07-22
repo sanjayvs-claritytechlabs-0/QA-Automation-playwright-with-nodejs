@@ -1,5 +1,17 @@
-import type { Page } from 'playwright';
+import fs from 'fs/promises';
+import os from 'os';
+import path from 'path';
+import {
+  chromium,
+  firefox,
+  webkit,
+  type Browser,
+  type BrowserContext,
+  type BrowserType,
+  type Page,
+} from 'playwright';
 import logger from '../config/logger';
+import env from '../config/env';
 import { browserService } from './browser.service';
 import { buildPageLocator } from '../utils/locator-resolve';
 import { normalizeUrl } from '../utils/url';
@@ -11,6 +23,14 @@ import type {
   ExecuteStep,
 } from '../types/qa.types';
 
+type CaseArtifact = {
+  kind: string;
+  filename: string;
+  content_type: string;
+  encoding: 'base64';
+  data: string;
+};
+
 type CaseResult = {
   test_case_id: string;
   test_plan_id?: string;
@@ -18,14 +38,17 @@ type CaseResult = {
   duration_ms: number;
   error_message: string | null;
   steps: Array<{ ordinal?: number; action: string; ok: boolean; error?: string }>;
-  artifacts: Array<{
-    kind: string;
-    filename: string;
-    content_type: string;
-    encoding: 'base64';
-    data: string;
-  }>;
+  artifacts: CaseArtifact[];
 };
+
+type BrowserName = 'chromium' | 'firefox' | 'webkit';
+
+function resolveBrowserType(name?: string): { name: BrowserName; type: BrowserType } {
+  const key = (name || 'chromium').toLowerCase() as BrowserName;
+  if (key === 'firefox') return { name: 'firefox', type: firefox };
+  if (key === 'webkit') return { name: 'webkit', type: webkit };
+  return { name: 'chromium', type: chromium };
+}
 
 function resolveGotoUrl(baseUrl: string, value?: string | null): string {
   if (!value || !value.trim()) return baseUrl;
@@ -160,11 +183,31 @@ async function runStep(page: Page, baseUrl: string, step: ExecuteStep): Promise<
   }
 }
 
+async function captureScreenshot(
+  page: Page,
+  artifacts: CaseArtifact[],
+  testCaseId: string,
+  suffix: string
+): Promise<void> {
+  try {
+    const buf = await page.screenshot({ type: 'png', fullPage: false });
+    artifacts.push({
+      kind: 'screenshot',
+      filename: `${testCaseId}-${suffix}.png`,
+      content_type: 'image/png',
+      encoding: 'base64',
+      data: buf.toString('base64'),
+    });
+  } catch (shotErr) {
+    logger.warn('Screenshot capture failed:', shotErr);
+  }
+}
+
 async function runCase(
   page: Page,
   baseUrl: string,
   c: ExecuteCase,
-  screenshotOnFailure: boolean
+  captureScreenshotEnabled: boolean
 ): Promise<CaseResult> {
   const started = Date.now();
   const stepLog: CaseResult['steps'] = [];
@@ -189,6 +232,10 @@ async function runCase(
       await runAssertion(page, assertion);
     }
 
+    if (captureScreenshotEnabled) {
+      await captureScreenshot(page, artifacts, c.test_case_id, 'pass');
+    }
+
     return {
       test_case_id: c.test_case_id,
       test_plan_id: c.test_plan_id,
@@ -201,19 +248,8 @@ async function runCase(
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Case failed';
     const isError = /Unsupported|requires locator|Missing/i.test(message);
-    if (screenshotOnFailure) {
-      try {
-        const buf = await page.screenshot({ type: 'png', fullPage: false });
-        artifacts.push({
-          kind: 'screenshot',
-          filename: `${c.test_case_id}-fail.png`,
-          content_type: 'image/png',
-          encoding: 'base64',
-          data: buf.toString('base64'),
-        });
-      } catch (shotErr) {
-        logger.warn('Screenshot on failure failed:', shotErr);
-      }
+    if (captureScreenshotEnabled) {
+      await captureScreenshot(page, artifacts, c.test_case_id, 'fail');
     }
     return {
       test_case_id: c.test_case_id,
@@ -227,36 +263,57 @@ async function runCase(
   }
 }
 
+async function readVideoArtifact(
+  page: Page,
+  context: BrowserContext,
+  testCaseId: string,
+  videoDir: string
+): Promise<CaseArtifact | null> {
+  const video = page.video();
+  try {
+    await page.close().catch(() => undefined);
+    await context.close();
+  } catch (closeErr) {
+    logger.warn('Context close after video failed:', closeErr);
+  }
+
+  if (!video) {
+    await fs.rm(videoDir, { recursive: true, force: true }).catch(() => undefined);
+    return null;
+  }
+
+  try {
+    const videoPath = await video.path();
+    const buf = await fs.readFile(videoPath);
+    return {
+      kind: 'video',
+      filename: `${testCaseId}.webm`,
+      content_type: 'video/webm',
+      encoding: 'base64',
+      data: buf.toString('base64'),
+    };
+  } catch (vidErr) {
+    logger.warn('Video artifact read failed:', vidErr);
+    return null;
+  } finally {
+    await fs.rm(videoDir, { recursive: true, force: true }).catch(() => undefined);
+  }
+}
+
 export class ExecuteService {
   async execute(input: ExecuteRequest) {
-    const screenshotOnFailure = input.capture?.screenshot_on_failure !== false;
-    // video/trace: not enabled cheaply on shared singleton context — omit artifacts (do not fake)
-    if (input.capture?.video || input.capture?.trace) {
-      logger.info('execute: video/trace requested but not implemented on shared browser context');
+    // screenshot_on_failure=true (default) → screenshot every case (pass + fail)
+    const captureScreenshotEnabled = input.capture?.screenshot_on_failure !== false;
+    const captureVideo = input.capture?.video === true;
+    if (input.capture?.trace) {
+      logger.info('execute: trace requested but not implemented (no fake artifacts)');
     }
 
-    let page: Page | null = null;
-
     try {
-      page = await browserService.createPage(input.browser);
-      const results: CaseResult[] = [];
-
-      for (const c of input.cases) {
-        const result = await runCase(page, input.base_url, c, screenshotOnFailure);
-        results.push(result);
+      if (captureVideo) {
+        return await this.executeWithVideo(input, captureScreenshotEnabled);
       }
-
-      const stats = {
-        passed: results.filter((r) => r.status === 'passed').length,
-        failed: results.filter((r) => r.status === 'failed').length,
-        error: results.filter((r) => r.status === 'error').length,
-      };
-
-      return {
-        ok: true as const,
-        results,
-        stats,
-      };
+      return await this.executeSharedPage(input, captureScreenshotEnabled);
     } catch (err) {
       logger.error('Execute top-level failure:', err);
       const message = err instanceof Error ? err.message : 'Execute failed';
@@ -274,10 +331,92 @@ export class ExecuteService {
           message,
         },
       };
+    }
+  }
+
+  /** Fast path: one shared page, screenshot per case when enabled. */
+  private async executeSharedPage(input: ExecuteRequest, captureScreenshotEnabled: boolean) {
+    let page: Page | null = null;
+    try {
+      page = await browserService.createPage(input.browser);
+      const results: CaseResult[] = [];
+      for (const c of input.cases) {
+        results.push(await runCase(page, input.base_url, c, captureScreenshotEnabled));
+      }
+      return {
+        ok: true as const,
+        results,
+        stats: statsFrom(results),
+      };
     } finally {
       if (page) await browserService.closePage(page);
     }
   }
+
+  /**
+   * Video requires recordVideo on a dedicated context per case.
+   * One browser launch; new context+page per case; video finalized on context close.
+   */
+  private async executeWithVideo(input: ExecuteRequest, captureScreenshotEnabled: boolean) {
+    const { type } = resolveBrowserType(input.browser);
+    let browser: Browser | null = null;
+
+    try {
+      browser = await type.launch({ headless: env.PLAYWRIGHT_HEADLESS });
+      const results: CaseResult[] = [];
+
+      for (const c of input.cases) {
+        const videoDir = await fs.mkdtemp(path.join(os.tmpdir(), 'qa-vid-'));
+        let context: BrowserContext | null = null;
+        let page: Page | null = null;
+        try {
+          context = await browser.newContext({
+            userAgent:
+              'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+            viewport: { width: 1280, height: 720 },
+            recordVideo: { dir: videoDir, size: { width: 1280, height: 720 } },
+          });
+          page = await context.newPage();
+          page.setDefaultTimeout(env.PLAYWRIGHT_TIMEOUT_MS);
+          page.setDefaultNavigationTimeout(env.PLAYWRIGHT_TIMEOUT_MS);
+
+          const result = await runCase(page, input.base_url, c, captureScreenshotEnabled);
+          const videoArt = await readVideoArtifact(page, context, c.test_case_id, videoDir);
+          page = null;
+          context = null;
+          if (videoArt) result.artifacts.push(videoArt);
+          results.push(result);
+        } catch (caseErr) {
+          if (page) await page.close().catch(() => undefined);
+          if (context) await context.close().catch(() => undefined);
+          await fs.rm(videoDir, { recursive: true, force: true }).catch(() => undefined);
+          throw caseErr;
+        }
+      }
+
+      return {
+        ok: true as const,
+        results,
+        stats: statsFrom(results),
+      };
+    } finally {
+      if (browser) {
+        try {
+          await browser.close();
+        } catch (closeErr) {
+          logger.warn('Video browser close failed:', closeErr);
+        }
+      }
+    }
+  }
+}
+
+function statsFrom(results: CaseResult[]) {
+  return {
+    passed: results.filter((r) => r.status === 'passed').length,
+    failed: results.filter((r) => r.status === 'failed').length,
+    error: results.filter((r) => r.status === 'error').length,
+  };
 }
 
 export const executeService = new ExecuteService();

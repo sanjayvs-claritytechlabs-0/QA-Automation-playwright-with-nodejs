@@ -141,7 +141,7 @@ Content-Type: application/json
   "browser": "chromium",
   "capture": {
     "screenshot_on_failure": true,
-    "video": false,
+    "video": true,
     "trace": false
   },
   "cases": [
@@ -174,9 +174,7 @@ Content-Type: application/json
 }
 ```
 
-Actions: `goto`, `fill`, `click`, `check`, `uncheck`, `select`, `press`, `wait`, `assert`. Locator strategies map to Playwright helpers (`getByTestId`, `getByRole`, `getByPlaceholder`, `getByLabel`, `getByText`, CSS/`xpath=`). Failures return `passed|failed|error` with optional screenshot artifact `{ kind: "screenshot", encoding: "base64", ... }`.
-
-**Deviation:** `capture.video` / `capture.trace` are accepted but not recorded on the shared browser context (no fake artifacts).
+Actions: `goto`, `fill`, `click`, `check`, `uncheck`, `select`, `press`, `wait`, `assert`. Locator strategies map to Playwright helpers (`getByTestId`, `getByRole`, `getByPlaceholder`, `getByLabel`, `getByText`, CSS/`xpath=`). When `capture.screenshot_on_failure` is true (default), every case gets a PNG screenshot (pass and fail). When `capture.video` is true, each case runs in a dedicated context with `recordVideo` and returns a `video/webm` base64 artifact. Trace is accepted but not recorded.
 
 Contract helper self-check:
 
