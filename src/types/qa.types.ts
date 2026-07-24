@@ -12,6 +12,8 @@ export type DiscoverRequest = {
   max_pages?: number;
   browser?: string;
   same_origin?: boolean;
+  /** When set, visit these same-origin URLs first (and skip broad BFS link expansion). */
+  seed_urls?: string[];
   capture?: CaptureFlags;
 };
 

@@ -8,6 +8,7 @@ export const discoverRequestSchema = z.object({
   max_pages: z.number().int().min(1).optional(),
   browser: z.string().optional(),
   same_origin: z.boolean().optional().default(true),
+  seed_urls: z.array(z.string().url()).max(50).optional(),
   capture: z
     .object({
       html_snapshot: z.boolean().optional(),

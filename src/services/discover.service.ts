@@ -192,7 +192,23 @@ export class DiscoverService {
     let errors = 0;
     const pages: DiscoverPage[] = [];
     const seen = new Set<string>();
-    const queue: QueueItem[] = [{ url: baseNormalized, depth: 0 }];
+
+    // When seed_urls present: visit those (same-origin) up to max_pages; skip BFS link expansion
+    // so CSV/manual jobs don't wander into slow demo pages first.
+    const seedCandidates: string[] = [];
+    for (const raw of input.seed_urls ?? []) {
+      const n = normalizeUrl(raw);
+      if (!n) continue;
+      if (sameOrigin && !isSameOrigin(baseNormalized, n)) {
+        skippedExternal += 1;
+        continue;
+      }
+      if (!seedCandidates.includes(n)) seedCandidates.push(n);
+    }
+    const seedMode = seedCandidates.length > 0;
+    const queue: QueueItem[] = seedMode
+      ? seedCandidates.slice(0, maxPages).map((url) => ({ url, depth: 0 }))
+      : [{ url: baseNormalized, depth: 0 }];
 
     try {
       page = await browserService.createPage(input.browser);
@@ -278,7 +294,8 @@ export class DiscoverService {
 
           pages.push(discovered);
 
-          if (item.depth < maxDepth && pages.length < maxPages) {
+          // Seed mode: only visit listed URLs (no BFS). Otherwise expand same-origin links.
+          if (!seedMode && item.depth < maxDepth && pages.length < maxPages) {
             const links = await collectSameOriginHrefs(page, finalUrl);
             for (const link of links) {
               if (sameOrigin && !isSameOrigin(baseNormalized, link)) {

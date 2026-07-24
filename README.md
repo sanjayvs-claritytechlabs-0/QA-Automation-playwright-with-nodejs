@@ -100,6 +100,7 @@ Content-Type: application/json
   "max_pages": 50,
   "browser": "chromium",
   "same_origin": true,
+  "seed_urls": ["https://example.com/login"],
   "capture": {
     "html_snapshot": true,
     "screenshot": true,
@@ -109,7 +110,7 @@ Content-Type: application/json
 }
 ```
 
-BFS same-origin crawl with depth/page caps (hard max depth 5 / pages 200). Per page: `url`, `title`, `meta_description`, `depth`, `status`, optional HTML, screenshot (base64 PNG), and compact `page_model`. Stats: `{ visited, skipped_external, errors }`.
+BFS same-origin crawl with depth/page caps (hard max depth 5 / pages 200). When `seed_urls` is non-empty, those same-origin URLs are visited first (up to `max_pages`) and **link expansion is skipped** — Manual/CSV jobs can target case URLs without wandering into unrelated demos. Per page: `url`, `title`, `meta_description`, `depth`, `status`, optional HTML, screenshot (base64 PNG), and compact `page_model`. Stats: `{ visited, skipped_external, errors }`.
 
 #### Locators
 
